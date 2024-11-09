@@ -1,0 +1,113 @@
+---
+title: "Topic Modeling"
+author: "Yibing Wang"
+format: revealjs
+editor: visual
+---
+
+```{r}
+library(topicmodels)
+library(tm)
+library(ldatuning)
+library(ggplot2)
+library(wordcloud)
+library(reshape2)
+library(dplyr)
+```
+
+```{r}
+movie_data <- read.csv("xid-113733278_1")
+
+corpus <- VCorpus(VectorSource(movie_data$Plot))
+
+corpus <- tm_map(corpus, content_transformer(tolower))
+corpus <- tm_map(corpus, removePunctuation)
+corpus <- tm_map(corpus, removeNumbers)
+corpus <- tm_map(corpus, removeWords, stopwords("english"))
+corpus <- tm_map(corpus, stripWhitespace)
+
+#Document-Term Matrix
+dtm <- DocumentTermMatrix(corpus)
+```
+
+```{r}
+#class(dtm)
+```
+
+```{r}
+#number of topics
+result <- FindTopicsNumber(
+  dtm,
+  topics = seq(2, 20, by = 1),
+  metrics = c("Griffiths2004", "CaoJuan2009", "Arun2010", "Deveaud2014"),
+  method = "Gibbs",
+  control = list(seed = 1234),
+  mc.cores = 1L,
+  verbose = TRUE
+)
+FindTopicsNumber_plot(result)
+```
+
+Based on these metrics, k = 5 is likely to provide a good balance of coherent and distinct topics.it can capture the main themes in the movie plots dataset
+
+```{r}
+#k=5 as an example
+k <- 5
+lda_model <- LDA(dtm, k = k, method = "Gibbs", control = list(seed = 1234))
+terms(lda_model, 10)
+```
+
+```{r}
+#topic distribution per document
+doc_topics <- posterior(lda_model)$topics
+
+# df
+doc_topics_df <- as.data.frame(doc_topics)
+doc_topics_df$doc_id <- 1:nrow(doc_topics_df)
+doc_topics_long <- reshape2::melt(doc_topics_df, id.vars = "doc_id", variable.name = "topic")
+
+ggplot(doc_topics_long, aes(x = doc_id, y = value, fill = topic)) +
+  geom_bar(stat = "identity") +
+  labs(title = "Document-Topic Distribution", x = "Document", y = "Topic Proportion") +
+  theme_minimal()
+```
+
+Since each color represents a different topic, it suggests that each document contains a balanced mix of themes.
+
+A lower k could produce more general topics, while a higher k might have more specific themes. The plot, also suggests that k = 5 produces a even mix of topics across all documents
+
+```{r}
+gamma <- posterior(lda_model)$topics
+doc_topics_df <- as.data.frame(doc_topics)
+doc_topics_df$document <- 1:nrow(doc_topics_df)
+doc_topics_long <- melt(doc_topics_df, id.vars = "document", variable.name = "topic", value.name = "gamma")
+
+ggplot(doc_topics_long, aes(x = gamma)) +
+  geom_histogram(bins = 30, fill = "lightgreen", color = "black", alpha = 0.7) +
+  facet_wrap(~ topic, scales = "free_y") +
+  labs(title = "Gamma Distribution (Topic Proportions in Documents)", x = "Gamma Value", y = "Count") +
+  theme_minimal()
+```
+
+```{r}
+beta <- posterior(lda_model)$terms
+
+# df
+beta_df <- as.data.frame(beta)
+beta_df$topic <- factor(1:nrow(beta_df))
+beta_long <- melt(beta_df, id.vars = "topic", variable.name = "term", value.name = "beta")
+
+top_terms <- beta_long %>%
+  group_by(topic) %>%
+  slice_max(beta, n = 10) %>%
+  ungroup() %>%
+  arrange(topic, -beta)
+
+ggplot(top_terms, aes(x = reorder(term, beta), y = beta, fill = topic)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~ topic, scales = "free") +
+  coord_flip() +
+  labs(title = "Beta Plot (Top Terms in Topics)", x = "Term", y = "Beta Value") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
